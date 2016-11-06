@@ -9,7 +9,11 @@ enum {
   finish_bin_type,
   right_of_app_type,
   finish_app_type,
-  finish_if0_type
+  finish_if0_type,
+# if USE_JIT  
+  right_jitted_type,
+  finish_jitted_type,
+# endif
 };
 
 typedef struct cont {
@@ -49,8 +53,28 @@ typedef struct finish_if0 {
   tagged *thn;
   tagged *els;
   env *env;
-    cont *rest;
+  cont *rest;
 } finish_if0;
+
+#if USE_JIT
+typedef struct jitted {
+  cont c;
+  jitted_proc code;
+  jitted_proc tail_code;
+  cont *rest;
+} jitted;
+
+typedef struct right_jitted {
+  jitted j;
+  env* env;
+} right_jitted;
+
+typedef struct finish_jitted {
+  jitted j;
+  tagged* val;
+} finish_jitted;
+#endif
+
 
 cont *make_done();
 cont *make_right_of_bin(int op, tagged *right, env *env, cont *rest);
@@ -58,5 +82,9 @@ cont *make_finish_bin(int op, tagged *left_val, cont *rest);
 cont *make_right_of_app(tagged *right, env *env, cont *rest);
 cont *make_finish_app(tagged *left_val, cont *rest);
 cont *make_finish_if0(tagged *thn, tagged *els, env *env, cont *rest);
+#if USE_JIT
+cont *make_right_jitted(jitted_proc code, jitted_proc tail_code, cont *rest, env *env);
+cont *make_finish_jitted(jitted_proc code, jitted_proc tail_code, cont *rest, tagged* val);
+#endif
 
 #endif

@@ -17,15 +17,14 @@ tagged* make_num(int n) {
 }
 #endif
 
-tagged* make_func(symbol *arg_name, tagged *body, env *e) {
-  func_val *fv = (func_val *)gc_malloc3(sizeof(func_val),
-                                        &arg_name,
-                                        &body,
+tagged* make_func(tagged *lam, env *e) {
+  func_val *fv = (func_val *)gc_malloc2(sizeof(func_val),
+                                        &lam,
                                         &e);
   init_tagged(&fv->t, func_type);
-  fv->arg_name = arg_name;
-  fv->body = body;
+  fv->lam = (lambda_expr*)lam;
   fv->e = e;
+  
   return (tagged*)fv;
 }
 
@@ -76,6 +75,10 @@ tagged* make_lambda(symbol *arg_name, tagged *body) {
   init_tagged(&lam->t, lambda_type);
   lam->arg_name = arg_name;
   lam->body = body;
+# if USE_JIT
+  lam->code = NULL;
+  lam->tail_code = NULL;
+# endif
   return (tagged*)lam;
 }
 

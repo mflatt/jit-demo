@@ -12,5 +12,17 @@ Configure with `FIXNUM_ENCODING` in "struct.h".
 
 The evaluator supports an optional compilation pass that converts a
 local-variable reference to a De Bruijn index and substitutes a
-global-variable reference with its value (which creates a cyclic
-structure for a recursive function).
+top-level reference with its value (which creates a cyclic structure
+for a recursive function). This compiler is already a kind of
+just-in-time compiler, because it relies on having values for
+top-level definitions.
+
+A jit-in-time compiler to machine code is supported when `USE_JIT` is
+defined to 1 and when linked with GNU lightning. To build in that mode,
+build with something like
+
+ make CPPFLAGS="-DUSE_JIT=1" LIBS="-llightning"
+
+JIT compilation to native code works only on functions that don't have
+variables (i.e., where variables have been compiled to De Bruijn
+indices or replaced with global values).

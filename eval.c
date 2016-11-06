@@ -2,6 +2,7 @@
 #include "continue.h"
 #include "fail.h"
 #include "lookup.h"
+#include "jit.h"
 #include "gc.h"
 
 #define PERFORM_TODOS(_val, _todos) val = _val; todos = _todos; goto todo
@@ -58,8 +59,7 @@ void eval_star(hash_table* d)
     {
 #     define lam ((lambda_expr *)expr)
 
-      val = make_func(lam->arg_name,
-                      lam->body,
+      val = make_func(expr,
                       e);
       PERFORM_TODOS(val, todos);
 
@@ -80,7 +80,7 @@ void eval_star(hash_table* d)
     }
   }
 
-  fail("uh oh");
+  fail("unrecognized expression");
 
  todo:
   switch (TAGGED_TYPE(todos)) {
@@ -148,9 +148,19 @@ void eval_star(hash_table* d)
       if (TAGGED_TYPE(fn)) {
 #       define fv ((func_val *)fn)
 
-        e = make_env(fv->arg_name, val, fv->e);
-        EVAL(fv->body, e, gr->rest);
+        e = make_env(fv->lam->arg_name, val, fv->e);
 
+        if (jit(fv->lam)) {
+#         if USE_JIT
+          jitted_proc code = fv->lam->code;
+          todos = gr->rest;
+          /* `code` may update `todos` */
+          PERFORM_TODOS(code(&todos), todos);
+#         endif
+        } else {
+          EVAL(fv->lam->body, e, gr->rest);
+        }
+        
 #       undef fv
       } else
         fail("not a function");
@@ -172,10 +182,20 @@ void eval_star(hash_table* d)
         fail("not a number");
 
 #     undef gi
-    }  
+    }
+# if USE_JIT
+  case right_jitted_type:
+  case finish_jitted_type:
+    {
+#     define gj ((jitted *)todos)
+      /* `gj->code` updates `todos` */
+      PERFORM_TODOS(gj->code(), todos);
+#     undef gj
+    }
+# endif
   }
   
-  fail("uh oh");
+  fail("unrecognized continuation");
 }
 
 tagged* eval(tagged* _expr, env* _e, hash_table* d)

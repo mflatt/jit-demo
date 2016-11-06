@@ -63,9 +63,9 @@ void compile_function(symbol* name, hash_table *d) {
   if (TAGGED_TYPE(fn) != func_type)
     fail("not defined as a function");
 
-  ((func_val*)fn)->body = compile(((func_val*)fn)->body,
-                                  make_env(((func_val*)fn)->arg_name,
-                                           make_num(0),
-                                           NULL),
-                                  d);
+  ((func_val*)fn)->lam->body = compile(((func_val*)fn)->lam->body,
+                                       make_env(((func_val*)fn)->lam->arg_name,
+                                                make_num(0),
+                                                NULL),
+                                       d);
 }

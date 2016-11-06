@@ -8,6 +8,10 @@
 
 #define FIXNUM_ENCODING 1
 
+#ifndef USE_JIT
+# define USE_JIT 0
+#endif
+
 enum {
   num_type,
   func_type,
@@ -26,6 +30,7 @@ enum {
 };
 
 typedef struct env env;
+typedef struct lambda_expr lambda_expr;
 
 typedef struct tagged {
   int type;
@@ -47,10 +52,13 @@ typedef struct num_val {
 # define NUM_VAL(v) (((intptr_t)(v)) >> 1)
 #endif
 
+#if USE_JIT
+typedef tagged* (*jitted_proc)();
+#endif
+
 typedef struct func_val {
   tagged t;
-  struct symbol *arg_name;
-  tagged *body;
+  lambda_expr *lam;
   env* e;
 } func_val;
 
@@ -73,6 +81,10 @@ typedef struct lambda_expr {
   tagged t;
   symbol *arg_name;
   tagged *body;
+# if USE_JIT
+  jitted_proc code;
+  jitted_proc tail_code;
+# endif
 } lambda_expr;
 
 typedef struct if0_expr {
@@ -95,7 +107,7 @@ tagged* make_num(int n);
 # define make_num(n) ((tagged *)(intptr_t)(((n) << 1) | 0x1))
 #endif
 
-tagged* make_func(symbol *arg_name, tagged *body, env *e);
+tagged* make_func(tagged *lambda, env *e);
 symbol* make_symbol(char *s);
 tagged* make_debruijn(int pos);
 tagged* make_bin_op(int type, tagged *left, tagged *right);

@@ -5,6 +5,7 @@
 #include "eval.h"
 #include "struct.h"
 #include "continue.h"
+#include "jit.h"
 #include "fail.h"
 
 static char *to_start, *to_pos, *to_end;
@@ -146,6 +147,15 @@ static int gcable_size(int tag)
   case finish_if0_type:
     sz = sizeof(finish_if0);
     break;
+# if USE_JIT
+  case right_jitted_type:
+    sz = sizeof(right_jitted);
+    break;
+  case finish_jitted_type:
+    sz = sizeof(finish_jitted);
+    break;
+# endif
+
   default:
     fail("bad tag for sizeof");
     return 0;
@@ -201,8 +211,7 @@ static void follow_one_gray_pointer(void *p)
   case func_type:
     {
       func_val *fv = (func_val *)p;
-      paint_gray(&fv->arg_name);
-      paint_gray(&fv->body);
+      paint_gray(&fv->lam);
       paint_gray(&fv->e);
     }
     break;
@@ -274,6 +283,22 @@ static void follow_one_gray_pointer(void *p)
       paint_gray(&gi->rest);
     }
     break;
+# if USE_JIT
+  case right_jitted_type:
+    {
+      right_jitted *gj = (right_jitted *)p;
+      paint_gray(&gj->j.rest);
+      paint_gray(&gj->env);
+    }
+    break;
+  case finish_jitted_type:
+    {
+      finish_jitted *gj = (finish_jitted *)p;
+      paint_gray(&gj->j.rest);
+      paint_gray(&gj->val);
+    }
+    break;
+# endif
   default:
     fail("bad tag for paint_gray content");
     break;
@@ -303,7 +328,10 @@ static void collect_garbage(void *p1, void *p2, void *p3, void *p4)
   if (p2) paint_gray(p2);
   if (p3) paint_gray(p3);
   if (p4) paint_gray(p4);
-
+# if USE_JIT
+  push_jit_stack(paint_gray);
+# endif
+  
   gray_pos = to_start;
   while (gray_pos < to_pos) {
     follow_one_gray_pointer(gray_pos);

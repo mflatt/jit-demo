@@ -10,7 +10,7 @@
 #include "fail.h"
 #include "gc.h"
 
-#define RUN_FIB     0
+#define RUN_FIB     1
 #define RUN_FOREVER 0
 
 #if RUN_FIB
@@ -33,7 +33,7 @@ void check_num_val(tagged* r, int n)
   } else {
     if (n != NUM_VAL(r))
       printf("not expected number %d: ", n);
-    else
+    else 
       return;
   }
   print_val(r);
@@ -67,8 +67,13 @@ int main()
   tagged* x_var = (tagged*)x;
   tagged* z_var = (tagged*)z;
   tagged *id_lam = make_lambda(x, x_var);
-  tagged *id_func = make_func(x, x_var, NULL);
+  tagged *id_func = make_func(make_lambda(x, x_var), NULL);
   tagged *fofz = make_app(f_var, z_var);
+  tagged *idofone = make_app(id_lam, one);
+  tagged *eightofone = make_app(make_lambda(x, eight), one);
+  tagged *fiftysix = make_app(make_lambda(x, make_times(eightofone, seven)), one);
+  tagged *eightbybranch0 = make_app(make_lambda(x, make_plus(branch0, one)), one);
+  tagged *ninebybranch1 = make_app(make_lambda(x, make_plus(branch1, one)), one);
 
   hash_table* empty_d = make_dict();
   hash_table* fz_d = make_dict();
@@ -83,13 +88,18 @@ int main()
   tagged* c_z_var;
   tagged* c_id_lam;
   tagged* c_fofz;
+  tagged* c_idofone;
+  tagged* c_eightofone;
+  tagged* c_fiftysix;
+  tagged* c_eightbybranch0;
+  tagged* c_ninebybranch1;
 
 #if RUN_FOREVER
   symbol* forever = make_symbol("forever");
   tagged* forever_var = (tagged*)forever;
   tagged *forever_func 
-    = make_func(x,
-                make_app(forever_var, x_var),
+    = make_func(make_lambda(x,
+                            make_app(forever_var, x_var)),
                 NULL);
 
   hash_table* forever_d = make_dict();
@@ -104,15 +114,15 @@ int main()
   symbol* fib = make_symbol("fib");
   tagged* fib_var = (tagged*)fib;
   tagged* fib_func
-    = make_func(x,
-                make_if0(x_var,
-                         one,
-                         make_if0(make_minus(x_var, one),
-                                  one,
-                                  make_plus(make_app(fib_var,
-                                                     make_minus(x_var, one)),
-                                            make_app(fib_var,
-                                                     make_minus(x_var, two))))),
+    = make_func(make_lambda(x,
+                            make_if0(x_var,
+                                     one,
+                                     make_if0(make_minus(x_var, one),
+                                              one,
+                                              make_plus(make_app(fib_var,
+                                                                 make_minus(x_var, one)),
+                                                        make_app(fib_var,
+                                                                 make_minus(x_var, two)))))),
                 NULL);
   tagged* thirty = make_num(30);
   tagged* app_fib = make_app(fib_var, thirty);
@@ -132,6 +142,11 @@ int main()
   c_z_var = compile(z_var, NULL, fz_d);
   c_id_lam = compile(id_lam, NULL, fz_d);
   c_fofz = compile(fofz, NULL, fz_d);
+  c_idofone = compile(idofone, NULL, fz_d);
+  c_eightofone = compile(eightofone, NULL, fz_d);
+  c_fiftysix = compile(fiftysix, NULL, fz_d);
+  c_eightbybranch0 = compile(eightbybranch0, NULL, fz_d);
+  c_ninebybranch1 = compile(ninebybranch1, NULL, fz_d);
 
 # if RUN_FIB
   hash_set(fib_d, fib, fib_func);
@@ -156,6 +171,11 @@ int main()
   check_func_val(eval(id_lam, NULL, fz_d));
 
   check_num_val(eval(fofz, NULL, fz_d), 7);
+  check_num_val(eval(idofone, NULL, fz_d), 1);
+  check_num_val(eval(eightofone, NULL, fz_d), 8);
+  check_num_val(eval(fiftysix, NULL, fz_d), 56);
+  check_num_val(eval(eightbybranch0, NULL, fz_d), 8);
+  check_num_val(eval(ninebybranch1, NULL, fz_d), 9);
 
   check_num_val(eval(c_one, NULL, empty_d), 1);
 
@@ -169,6 +189,11 @@ int main()
   check_func_val(eval(c_id_lam, NULL, fz_d));
 
   check_num_val(eval(c_fofz, NULL, fz_d), 7);
+  check_num_val(eval(c_idofone, NULL, fz_d), 1);
+  check_num_val(eval(c_eightofone, NULL, fz_d), 8);
+  check_num_val(eval(c_fiftysix, NULL, fz_d), 56);
+  check_num_val(eval(c_eightbybranch0, NULL, fz_d), 8);
+  check_num_val(eval(c_ninebybranch1, NULL, fz_d), 9);
 
 # if RUN_FIB
   check_num_val(eval(app_fib, NULL, fib_d), fib_result);
