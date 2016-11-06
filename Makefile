@@ -1,7 +1,7 @@
 
-OBJS = main.o lookup.o hash.o struct.o eval.o print.o fail.o continue.o gc.o
-HEADERS = lookup.h hash.h fail.h struct.h continue.h gc.h
-CFLAGS = -Wall
+OBJS = main.o lookup.o hash.o struct.o eval.o compile.o print.o fail.o continue.o gc.o
+HEADERS = lookup.h hash.h fail.h struct.h continue.h gc.h compile.h
+CFLAGS = -O2 -Wall
 
 mr : $(OBJS)
 	$(CC) -o mr $(OBJS)

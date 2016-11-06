@@ -105,11 +105,11 @@ static int gcable_size(int tag)
   int sz;
 
   switch (tag) {
-#if !FIXNUM_ENCODING
+# if !FIXNUM_ENCODING
   case num_type:
     sz = sizeof(num_val);
     break;
-#endif
+# endif
   case func_type:
     sz = sizeof(func_val);
     break;

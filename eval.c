@@ -1,4 +1,3 @@
-#include <stdint.h>
 #include "eval.h"
 #include "continue.h"
 #include "fail.h"
@@ -20,8 +19,16 @@ void eval_star(hash_table* d)
   switch(TAGGED_TYPE(expr)) {
   case num_type:
     PERFORM_TODOS(expr, todos);
+  case func_type: /* literal function can appear as a result of compilation */
+    PERFORM_TODOS(expr, todos);
   case sym_type:
     PERFORM_TODOS(env_lookup((symbol*)expr, e, d), todos);
+  case debruijn_type:
+    {
+#     define db ((debruijn_expr*)expr)
+      PERFORM_TODOS(env_lookup_by_pos(db->pos, e), todos);
+#     undef db
+    }
   case plus_type:
   case minus_type:
   case times_type:

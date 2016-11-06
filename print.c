@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdint.h>
 #include "print.h"
 
 void print_val(tagged *t) {

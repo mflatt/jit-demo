@@ -48,3 +48,25 @@ tagged* env_lookup(symbol *id, env* e, hash_table* d) {
 
   return lookup(d, id);
 }
+
+int env_lookup_pos(symbol *id, env* e) {
+  int pos = 0;
+  while (e) {
+    if (!compare_sym(id, e->id))
+      return pos;
+    pos++;
+    e = e->rest;
+  }
+
+  return -1;
+}
+
+tagged* env_lookup_by_pos(int pos, env* e) {
+  while (e && pos--) {
+    e = e->rest;
+  }
+
+  if (!e)
+    fail("bad position");
+  return e->val;
+}

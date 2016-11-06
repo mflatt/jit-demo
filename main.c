@@ -5,6 +5,7 @@
 #include "struct.h"
 #include "lookup.h"
 #include "eval.h"
+#include "compile.h"
 #include "print.h"
 #include "fail.h"
 #include "gc.h"
@@ -50,11 +51,14 @@ void check_func_val(tagged* r)
 
 int main()
 {
+  tagged* zero = make_num(0);
   tagged* one = make_num(1);
   tagged* seven = make_num(7);
   tagged* eight = make_plus(one, seven);
   tagged* six = make_minus(seven, one);
   tagged* fortynine = make_times(seven, seven);
+  tagged* branch0 = make_if0(zero, seven, eight);
+  tagged* branch1 = make_if0(one, seven, eight);
   symbol* f = make_symbol("f");
   symbol* x = make_symbol("x");
   symbol* y = make_symbol("x");
@@ -68,6 +72,17 @@ int main()
 
   hash_table* empty_d = make_dict();
   hash_table* fz_d = make_dict();
+
+  tagged* c_one;
+  tagged* c_seven;
+  tagged* c_eight;
+  tagged* c_six;
+  tagged* c_fortynine;
+  tagged* c_branch0;
+  tagged* c_branch1;
+  tagged* c_z_var;
+  tagged* c_id_lam;
+  tagged* c_fofz;
 
 #if RUN_FOREVER
   symbol* forever = make_symbol("forever");
@@ -83,7 +98,7 @@ int main()
   
   env* y_env = make_env(y, one, NULL);
 
-#if RUN_FIB
+# if RUN_FIB
   hash_table* fib_d = make_dict();
   tagged* two = make_num(2);
   symbol* fib = make_symbol("fib");
@@ -102,12 +117,29 @@ int main()
   tagged* thirty = make_num(30);
   tagged* app_fib = make_app(fib_var, thirty);
   int fib_result = 1346269;
-#endif
-  
-  gc_init(HEAP_SIZE);
+# endif
 
   hash_set(fz_d, f, id_func);
   hash_set(fz_d, z, seven);
+
+  c_one = compile(one, NULL, empty_d);
+  c_seven = compile(seven, NULL, fz_d);
+  c_eight = compile(eight, NULL, fz_d);
+  c_six = compile(six, NULL, fz_d);
+  c_fortynine = compile(fortynine, NULL, fz_d);
+  c_branch0 = compile(branch0, NULL, fz_d);
+  c_branch1 = compile(branch1, NULL, fz_d);
+  c_z_var = compile(z_var, NULL, fz_d);
+  c_id_lam = compile(id_lam, NULL, fz_d);
+  c_fofz = compile(fofz, NULL, fz_d);
+
+# if RUN_FIB
+  hash_set(fib_d, fib, fib_func);
+  compile_function(fib, fib_d);
+# endif
+
+  gc_init(HEAP_SIZE);
+
   check_ptr(env_lookup(f, NULL, fz_d), id_func);
   check_ptr(env_lookup(z, NULL, fz_d), seven);
   check_ptr(env_lookup(y, y_env, fz_d), one);
@@ -118,21 +150,35 @@ int main()
   check_num_val(eval(eight, NULL, fz_d), 8);
   check_num_val(eval(six, NULL, fz_d), 6);
   check_num_val(eval(fortynine, NULL, fz_d), 49);
+  check_num_val(eval(branch0, NULL, fz_d), 7);
+  check_num_val(eval(branch1, NULL, fz_d), 8);
   check_num_val(eval(z_var, NULL, fz_d), 7);
   check_func_val(eval(id_lam, NULL, fz_d));
 
   check_num_val(eval(fofz, NULL, fz_d), 7);
 
-#if RUN_FIB
-  hash_set(fib_d, fib, fib_func);
-  check_num_val(eval(app_fib, NULL, fib_d), fib_result);
-#endif
+  check_num_val(eval(c_one, NULL, empty_d), 1);
 
-#if RUN_FOREVER
+  check_num_val(eval(c_seven, NULL, fz_d), 7);
+  check_num_val(eval(c_eight, NULL, fz_d), 8);
+  check_num_val(eval(c_six, NULL, fz_d), 6);
+  check_num_val(eval(c_fortynine, NULL, fz_d), 49);
+  check_num_val(eval(c_branch0, NULL, fz_d), 7);
+  check_num_val(eval(c_branch1, NULL, fz_d), 8);
+  check_num_val(eval(c_z_var, NULL, fz_d), 7);
+  check_func_val(eval(c_id_lam, NULL, fz_d));
+
+  check_num_val(eval(c_fofz, NULL, fz_d), 7);
+
+# if RUN_FIB
+  check_num_val(eval(app_fib, NULL, fib_d), fib_result);
+# endif
+
+# if RUN_FOREVER
   /* runs -- and GCs -- forever in constant space: */
   hash_set(forever_d, forever, forever_func);
   eval(app_forever, NULL, forever_d);
-#endif
+# endif
 
   printf("all tests passed\n");
 

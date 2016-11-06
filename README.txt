@@ -9,3 +9,8 @@ C API, as demonstrated in "main.c".
 Numbers are encoded either as record or using a fixnum encoding where
 the low bit is set to indicate a number instead of a pointer.
 Configure with `FIXNUM_ENCODING` in "struct.h".
+
+The evaluator supports an optional compilation pass that converts a
+local-variable reference to a De Bruijn index and substitutes a
+global-variable reference with its value (which creates a cyclic
+structure for a recursive function).

@@ -1,6 +1,8 @@
 #ifndef __STRUCT_H__
 #define __STRUCT_H__
 
+#include <stdint.h>
+
 #define TRUE 1
 #define FALSE 0
 
@@ -10,6 +12,7 @@ enum {
   num_type,
   func_type,
   sym_type,
+  debruijn_type,
   plus_type,
   minus_type,
   times_type,
@@ -56,6 +59,11 @@ typedef struct symbol {
   char *s;
 } symbol;
 
+typedef struct debruijn_expr {
+  tagged t;
+  int pos;
+} debruijn_expr;
+
 typedef struct bin_op_expr {
   tagged t;
   tagged *left, *right;
@@ -89,6 +97,8 @@ tagged* make_num(int n);
 
 tagged* make_func(symbol *arg_name, tagged *body, env *e);
 symbol* make_symbol(char *s);
+tagged* make_debruijn(int pos);
+tagged* make_bin_op(int type, tagged *left, tagged *right);
 tagged* make_plus(tagged *left, tagged *right);
 tagged* make_minus(tagged *left, tagged *right);
 tagged* make_times(tagged *left, tagged *right);

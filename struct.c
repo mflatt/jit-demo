@@ -36,7 +36,14 @@ symbol* make_symbol(char *s) {
   return sym;
 }
 
-static tagged* make_bin_op(int type, tagged *left, tagged *right) {
+tagged* make_debruijn(int pos) {
+  debruijn_expr *db = (debruijn_expr *)gc_malloc0(sizeof(debruijn_expr));
+  init_tagged(&db->t, debruijn_type);
+  db->pos = pos;
+  return (tagged*)db;
+}
+
+tagged* make_bin_op(int type, tagged *left, tagged *right) {
   bin_op_expr *bin = (bin_op_expr *)gc_malloc2(sizeof(bin_op_expr),
                                                &left,
                                                &right);
