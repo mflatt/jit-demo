@@ -27,10 +27,10 @@ void check_ptr(void* a, void* b)
 
 void check_num_val(tagged* r, int n)
 {
-  if (r->type != num_type) {
+  if (TAGGED_TYPE(r) != num_type) {
     printf("not a number: ");
   } else {
-    if (n != ((num_val *)r)->n)
+    if (n != NUM_VAL(r))
       printf("not expected number %d: ", n);
     else
       return;
@@ -41,7 +41,7 @@ void check_num_val(tagged* r, int n)
 
 void check_func_val(tagged* r)
 {
-  if (r->type != func_type) {
+  if (TAGGED_TYPE(r) != func_type) {
     printf("not a function: ");
     print_val(r);
     fail("failed func_val");

@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include "eval.h"
 #include "continue.h"
 #include "fail.h"
@@ -16,7 +17,7 @@ void eval_star(hash_table* d)
 {
 
  eval:
-  switch(expr->type) {
+  switch(TAGGED_TYPE(expr)) {
   case num_type:
     PERFORM_TODOS(expr, todos);
   case sym_type:
@@ -75,7 +76,7 @@ void eval_star(hash_table* d)
   fail("uh oh");
 
  todo:
-  switch (todos->type) {
+  switch (TAGGED_TYPE(todos)) {
   case done_type:
     return;
   case right_of_bin_type:
@@ -97,13 +98,13 @@ void eval_star(hash_table* d)
       tagged *r = val;
       int ln, rn, vn;
        
-      if (l->type != num_type)
+      if (TAGGED_TYPE(l) != num_type)
         fail("not a number");
-      if (r->type != num_type)
+      if (TAGGED_TYPE(r) != num_type)
         fail("not a number");
        
-      ln = ((num_val *)l)->n;
-      rn = ((num_val *)r)->n;
+      ln = NUM_VAL(l);
+      rn = NUM_VAL(r);
 
       switch(gr->op) {
       case plus_type:
@@ -137,7 +138,7 @@ void eval_star(hash_table* d)
 #     define gr ((finish_app *)todos)
 #     define fn (gr->left_val)
 
-      if (fn->type == func_type) {
+      if (TAGGED_TYPE(fn)) {
 #       define fv ((func_val *)fn)
 
         e = make_env(fv->arg_name, val, fv->e);
@@ -154,8 +155,8 @@ void eval_star(hash_table* d)
     {
 #     define gi ((finish_if0 *)todos)
 
-      if (val->type == num_type) {
-        if (((num_val *)val)->n == 0) {
+      if (TAGGED_TYPE(val) == num_type) {
+        if (NUM_VAL(val) == 0) {
           EVAL(gi->thn, gi->env, gi->rest);
         } else {
           EVAL(gi->els, gi->env, gi->rest);

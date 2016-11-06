@@ -105,9 +105,11 @@ static int gcable_size(int tag)
   int sz;
 
   switch (tag) {
+#if !FIXNUM_ENCODING
   case num_type:
     sz = sizeof(num_val);
     break;
+#endif
   case func_type:
     sz = sizeof(func_val);
     break;
@@ -161,8 +163,11 @@ static void paint_gray(void *_pp)
 
   /* First, check whether the referenced object is gcable,
      because it might instead have been allocated with
-     gc disabled: */
-  if (((char*)*pp >= from_start) && ((char*)*pp < from_end)) {
+     gc disabled, or it might be a number encoded with an
+     odd address: */
+  if (!((uintptr_t)(*pp) & 0x1)
+      && ((char*)*pp >= from_start)
+      && ((char*)*pp < from_end)) {
     /* It's a reference to a gcable object */
     gcable *p = (gcable *)*pp;
 
@@ -188,7 +193,7 @@ static void paint_gray(void *_pp)
   }
 }
 
-static void follow_one_gray_pointers(void *p)
+static void follow_one_gray_pointer(void *p)
 {
   switch (((gcable *)p)->tag) {
   case num_type:
@@ -301,7 +306,7 @@ static void collect_garbage(void *p1, void *p2, void *p3, void *p4)
 
   gray_pos = to_start;
   while (gray_pos < to_pos) {
-    follow_one_gray_pointers(gray_pos);
+    follow_one_gray_pointer(gray_pos);
     gray_pos += gcable_size(((gcable *)gray_pos)->tag);
   }
 

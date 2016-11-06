@@ -1,10 +1,11 @@
 #include <stdio.h>
+#include <stdint.h>
 #include "print.h"
 
 void print_val(tagged *t) {
-  switch(t->type) {
+  switch(TAGGED_TYPE(t)) {
   case num_type:
-    printf("%d", ((num_val*)t)->n);
+    printf("%ld", (long)NUM_VAL(t));
     break;
   case func_type:
     printf("#<function>");

@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include "struct.h"
 #include "gc.h"
 
@@ -7,12 +8,14 @@ static void init_tagged(tagged *t, int tag) {
   t->type = tag;
 }
 
+#if !FIXNUM_ENCODING
 tagged* make_num(int n) {
   num_val *nv = (num_val *)gc_malloc0(sizeof(num_val));
   init_tagged(&nv->t, num_type);
   nv->n = n;
   return (tagged*)nv;
 }
+#endif
 
 tagged* make_func(symbol *arg_name, tagged *body, env *e) {
   func_val *fv = (func_val *)gc_malloc3(sizeof(func_val),
