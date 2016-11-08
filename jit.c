@@ -278,8 +278,10 @@ static void jit_expr(tagged* expr, int stack_pos)
     {
       lambda_expr *lam = (lambda_expr *)expr;
 
+      jit_ldi(JIT_R0, &e);      
+
       jit_prep_possible_gc(stack_pos, JIT_R2);
-      
+
       jit_prepare();
       jit_pushargi_p(lam);
       jit_pushargr(JIT_R0);
@@ -431,9 +433,9 @@ static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
       /* Extend the environment */
       jit_get_stack(JIT_R1, stack_pos);
       jit_get_stack(JIT_R0, stack_pos+1);
+      jit_ldxi(JIT_R2, JIT_R1, offsetof(func_val, e));
       jit_ldxi(JIT_R1, JIT_R1, offsetof(func_val, lam));
       jit_ldxi(JIT_R1, JIT_R1, offsetof(lambda_expr, arg_name));
-      jit_ldi(JIT_R2, &e);
       
       jit_prepare();
       jit_pushargr(JIT_R1); /* argument name */

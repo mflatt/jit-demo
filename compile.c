@@ -59,13 +59,17 @@ tagged* compile(tagged* expr, env* e, hash_table* d)
 void compile_function(symbol* name, hash_table *d) {
   /* Compiles a (potentially recursive) function that's in d */
   tagged* fn = lookup(d, name);
+  tagged* new_lam;
 
   if (TAGGED_TYPE(fn) != func_type)
     fail("not defined as a function");
 
-  ((func_val*)fn)->lam->body = compile(((func_val*)fn)->lam->body,
-                                       make_env(((func_val*)fn)->lam->arg_name,
-                                                make_num(0),
-                                                NULL),
-                                       d);
+  new_lam = make_lambda(((func_val*)fn)->lam->arg_name,
+                        compile(((func_val*)fn)->lam->body,
+                                make_env(((func_val*)fn)->lam->arg_name,
+                                         make_num(0),
+                                         ((func_val *)fn)->e),
+                                d));
+    
+  ((func_val*)fn)->lam = (lambda_expr*)new_lam;
 }
