@@ -4,6 +4,8 @@
 
 #if !USE_JIT
 
+#include "hash.h"
+
 int jit(func_val* fv, hash_table* d) {
   return FALSE;
 }

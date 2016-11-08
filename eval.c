@@ -145,7 +145,7 @@ void eval_star(hash_table* d)
 #     define gr ((finish_app *)todos)
 #     define fn (gr->left_val)
 
-      if (TAGGED_TYPE(fn)) {
+      if (TAGGED_TYPE(fn) == func_type) {
 #       define fv ((func_val *)fn)
 
         e = make_env(fv->lam->arg_name, val, fv->e);
