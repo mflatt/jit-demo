@@ -4,7 +4,7 @@
 
 #if !USE_JIT
 
-int jit(func_val *fv) {
+int jit(func_val* fv, hash_table* d) {
   return FALSE;
 }
 
@@ -14,6 +14,7 @@ int jit(func_val *fv) {
 #include "gc.h"
 #include "eval.h"
 #include "continue.h"
+#include "lookup.h"
 #include "fail.h"
 
 #define jit_movi_p(dest, addr) jit_movi(dest, (jit_word_t)(addr))
@@ -21,19 +22,26 @@ int jit(func_val *fv) {
 
 static int inited = 0;
 
-typedef struct {
+typedef struct context {
+  hash_table* d;
+  symbol* arg_name;
   int stack_pos;
   env *env;
   int env_start;
+  int specialize;
+
+  tagged* inline_arg;
+  struct context *inline_from;
 } context;
 
 static jit_state_t *_jit;
 
 static void jit_expr(tagged* expr, context *ctx);
+static void jit_variable(int pos, context *ctx);
 static void jit_cont_expr(tagged* expr, int cont_type, context *ctx);
 static jitted_proc jit_continue_by_interp(tagged* body);
 
-static void jit_cont_make(tagged* expr, int cont_type, int jit_cont_type);
+static void jit_cont_make(tagged* expr, context *ctx, int cont_type, int jit_cont_type);
 
 static void do_jit_next();
 static void continue_or_return();
@@ -46,11 +54,13 @@ static void jit_movi_maybe_gc(int reg, tagged* v);
 
 static void jit_maybe_specialize(int stack_pos, context *ctx);
 static func_val *realloc_lam(func_val *fv);
+static tagged* extract_known(int pos, context *ctx);
 
-static int no_calls(tagged* expr);
-static int can_jit(tagged* expr);
+static int no_calls(tagged* expr, context *ctx);
+static int want_to_jit(lambda_expr* lam);
 static int definitely_number(tagged* expr);
 static int definitely_function(tagged* expr);
+static int can_inline(bin_op_expr* bn, context *ctx, int without_introducing_calls, func_val **_fv);
 
 #define STACK_SIZE 64
 static tagged* stack[STACK_SIZE];
@@ -77,28 +87,36 @@ void push_jit_roots(void (*paint_gray)(void *))
 # error "JIT requires fixnum encoding"
 #endif
 
-static void init_context(context *ctx)
+static void init_context(context *ctx, hash_table* d, symbol* arg_name, env* e)
 {
+  ctx->d = d;
+  ctx->arg_name = arg_name;
   ctx->stack_pos = 0;
-  ctx->env = NULL;
+  ctx->env = e;
   ctx->env_start = 1;
+  ctx->specialize = 0;
+
+  ctx->inline_arg = NULL;
+  ctx->inline_from = NULL;
 }
 
-int jit(func_val *fv)
+int jit(func_val *fv, hash_table* d)
 {
   jit_state_t *old_jit;
   jit_node_t *after_prolog;
   lambda_expr *lam = fv->lam;
   context ctx;
 
-  init_context(&ctx);
+  init_context(&ctx, d, lam->arg_name, fv->e);
 
-  if ((fv->specialize_counter == 1) && can_jit(lam->body)) {
+  if ((fv->specialize_counter == 1) && want_to_jit(lam)) {
     fv->specialize_counter = 0;
     if (fv->e) {
       fv = realloc_lam(fv);
       lam = fv->lam;
       ctx.env = fv->e;
+      ctx.arg_name = lam->arg_name;
+      ctx.specialize = 1;
     }
   }
 
@@ -108,7 +126,7 @@ int jit(func_val *fv)
   if (lam->tail_code)
     return FALSE; /* tail code continues via interp */
 
-  if (!can_jit(lam->body)) {
+  if (!want_to_jit(lam)) {
     lam->tail_code = jit_continue_by_interp(lam->body);
     return FALSE;
   }
@@ -138,14 +156,11 @@ int jit(func_val *fv)
   return TRUE;
 }
 
-jitted_proc jit_cont(tagged* expr, int cont_type, int jit_cont_type, jitted_proc *_tail_code)
+jitted_proc jit_cont(tagged* expr, context *ctx, int cont_type, int jit_cont_type, jitted_proc *_tail_code)
 {
   jitted_proc code;
   jit_state_t *old_jit;
   jit_node_t *after_prolog;
-  context ctx;
-
-  init_context(&ctx);
    
   old_jit = _jit;
   _jit = jit_new_state();
@@ -171,7 +186,7 @@ jitted_proc jit_cont(tagged* expr, int cont_type, int jit_cont_type, jitted_proc
 
   jit_ldi(JIT_R0, &val);
  
-  jit_cont_expr(expr, cont_type, &ctx);
+  jit_cont_expr(expr, cont_type, ctx);
 
   continue_or_return();
   
@@ -263,25 +278,23 @@ static void jit_expr(tagged* expr, context *ctx)
     jit_movi_maybe_gc(JIT_R0, expr);
     break;
   case sym_type:
-    fail("cannot JIT symbol lookup");
+    {
+      int pos;
+      if (same_symbol((symbol*)expr, ctx->arg_name))
+        jit_variable(0, ctx);
+      else {
+        pos = env_lookup_pos((symbol *)expr, ctx->env);
+        if (pos != -1)
+          jit_variable(pos+1, ctx);
+        else
+          jit_movi_maybe_gc(JIT_R0, lookup(ctx->d, (symbol *)expr));
+      }
+    }
     break;
   case debruijn_type:
     {
       int pos = ((debruijn_expr*)expr)->pos;
-      if (ctx->env && (pos >= ctx->env_start)) {
-        /* specializing; use known value */
-        env *env = ctx->env;
-        pos -= ctx->env_start;
-        while (pos--)
-          env = env->rest;
-        jit_movi_maybe_gc(JIT_R0, env->val);
-      } else {
-        jit_ldi(JIT_R2, &e);
-        while (pos--) {
-          jit_ldxi(JIT_R2, JIT_R2, offsetof(env, rest));
-        }
-        jit_ldxi(JIT_R0, JIT_R2, offsetof(env, val));
-      }
+      jit_variable(pos, ctx);
     }
     break;
   case plus_type:
@@ -290,7 +303,7 @@ static void jit_expr(tagged* expr, context *ctx)
     {
       bin_op_expr* bn = (bin_op_expr*)expr;
 
-      if (no_calls(bn->left) && no_calls(bn->right)) {
+      if (no_calls(bn->left, ctx) && no_calls(bn->right, ctx)) {
         jit_expr(bn->left, ctx);
 
         jit_set_stack(ctx->stack_pos, JIT_R0);
@@ -301,7 +314,7 @@ static void jit_expr(tagged* expr, context *ctx)
 
         jit_cont_expr(expr, finish_bin_type, ctx);
       } else {
-        jit_cont_make(expr, right_of_bin_type, right_jitted_type);
+        jit_cont_make(expr, ctx, right_of_bin_type, right_jitted_type);
         jit_expr(bn->left, ctx);
         do_jit_next();
       }
@@ -311,12 +324,12 @@ static void jit_expr(tagged* expr, context *ctx)
     {
       if0_expr* if0 = (if0_expr*)expr;
 
-      if (no_calls(if0->tst)) {
+      if (no_calls(if0->tst, ctx)) {
         jit_expr(if0->tst, ctx);
 
         jit_cont_expr(expr, finish_if0_type, ctx);
       } else {
-        jit_cont_make(expr, finish_if0_type, right_jitted_type);
+        jit_cont_make(expr, ctx, finish_if0_type, right_jitted_type);
         jit_expr(if0->tst, ctx);
         do_jit_next();
       }
@@ -340,26 +353,59 @@ static void jit_expr(tagged* expr, context *ctx)
   case app_type:
     {
       bin_op_expr* bn = (bin_op_expr*)expr;
+      func_val *fv;
 
-      if (no_calls(bn->left) && no_calls(bn->right)) {
-        jit_expr(bn->left, ctx);
+      if (can_inline(bn, ctx, FALSE, &fv)) {
+        /* inline a call */
+        context in_ctx;
+        init_context(&in_ctx, ctx->d, fv->lam->arg_name, fv->e);
+        in_ctx.inline_arg = bn->right;
+        in_ctx.inline_from = ctx;
+        jit_expr(fv->lam->body, &in_ctx);
+      } else {
+        if (no_calls(bn->left, ctx) && no_calls(bn->right, ctx)) {
+          jit_expr(bn->left, ctx);
 
-        jit_set_stack(ctx->stack_pos, JIT_R0);
+          jit_set_stack(ctx->stack_pos, JIT_R0);
 
-        jit_expr_push(bn->right, ctx);
+          jit_expr_push(bn->right, ctx);
 
-        jit_get_stack(JIT_R1, ctx->stack_pos);
+          jit_get_stack(JIT_R1, ctx->stack_pos);
 
-        jit_cont_expr(expr, finish_app_type, ctx);
-      } else  {
-        jit_cont_make(expr, right_of_app_type, right_jitted_type);
-        jit_expr(bn->left, ctx);
-        do_jit_next();
+          jit_cont_expr(expr, finish_app_type, ctx);
+        } else  {
+          jit_cont_make(expr, ctx, right_of_app_type, right_jitted_type);
+          jit_expr(bn->left, ctx);
+          do_jit_next();
+        }
       }
     }
     break;
   default:
     fail("unrecognized expression in JIT compile");
+  }
+}
+
+static void jit_variable(int pos, context *ctx)
+{
+  tagged* val;
+  val = extract_known(pos, ctx);
+  if (val) {
+    if (TAGGED_TYPE(val) == debruijn_type) {
+      /* due to inlining */
+      jit_variable(pos + ((debruijn_expr*)val)->pos + 1, ctx);
+    } else if (TAGGED_TYPE(val) == sym_type) {
+      /* due to inlining */
+      
+    } else
+      jit_expr(val, ctx);
+  } else if ((pos == 0) && ctx->inline_arg) {
+    jit_expr(ctx->inline_arg, ctx->inline_from);
+  } else {
+    jit_ldi(JIT_R2, &e);
+    while (pos--)
+      jit_ldxi(JIT_R2, JIT_R2, offsetof(env, rest));
+    jit_ldxi(JIT_R0, JIT_R2, offsetof(env, val));
   }
 }
 
@@ -370,13 +416,13 @@ static void jit_cont_expr(tagged* expr, int cont_type, context *ctx)
     {
       bin_op_expr* bn = (bin_op_expr*)expr;
 
-      if (no_calls(bn->right)) {
+      if (no_calls(bn->right, ctx)) {
         jit_set_stack(ctx->stack_pos, JIT_R0);
         jit_expr_push(bn->right, ctx);
         jit_get_stack(JIT_R1, ctx->stack_pos);
         jit_cont_expr(expr, finish_bin_type, ctx);
       } else {
-        jit_cont_make(expr, finish_bin_type, finish_jitted_type);
+        jit_cont_make(expr, ctx, finish_bin_type, finish_jitted_type);
         jit_expr(bn->right, ctx);
         do_jit_next();
       }
@@ -438,13 +484,13 @@ static void jit_cont_expr(tagged* expr, int cont_type, context *ctx)
     {
       bin_op_expr* bn = (bin_op_expr*)expr;
 
-      if (no_calls(bn->right)) {
+      if (no_calls(bn->right, ctx)) {
         jit_set_stack(ctx->stack_pos, JIT_R0);
         jit_expr_push(bn->right, ctx);
         jit_get_stack(JIT_R1, ctx->stack_pos);
         jit_cont_expr(expr, finish_app_type, ctx);
       } else {
-        jit_cont_make(expr, finish_app_type, finish_jitted_type);
+        jit_cont_make(expr, ctx, finish_app_type, finish_jitted_type);
         jit_expr(bn->right, ctx);
         do_jit_next();
       }
@@ -473,8 +519,10 @@ static void jit_cont_expr(tagged* expr, int cont_type, context *ctx)
 
       {
         /* Not yet JIT-compiled, so compile it now */
+        jit_movi_p(JIT_R0, ctx->d);
         jit_prepare();
         jit_pushargr(JIT_R1);
+        jit_pushargr(JIT_R0);
         jit_finishi(jit);
       }
       
@@ -508,11 +556,11 @@ static void jit_cont_expr(tagged* expr, int cont_type, context *ctx)
   }
 }
 
-static void jit_cont_make(tagged* expr, int cont_type, int jit_cont_type)
+static void jit_cont_make(tagged* expr, context *ctx, int cont_type, int jit_cont_type)
 {
   jitted_proc cont_code, cont_tail_code;
   
-  cont_code = jit_cont(expr, cont_type, jit_cont_type, &cont_tail_code);
+  cont_code = jit_cont(expr, ctx, cont_type, jit_cont_type, &cont_tail_code);
   
   jit_prep_possible_gc(0, JIT_R2);
 
@@ -615,8 +663,10 @@ static void jit_maybe_specialize(int stack_pos, context *ctx)
   
   /* If specialize_counter goes to 1, then specialize */
   branch2 = jit_bnei(JIT_R2, 1);
+  jit_movi_p(JIT_R0, ctx->d);
   jit_prepare();
   jit_pushargr(JIT_R1);
+  jit_pushargr(JIT_R0);
   jit_finishi(jit);
 
   /* Reload function into JIT_R1 */
@@ -646,52 +696,47 @@ static func_val *realloc_lam(func_val *fv)
   return fv;
 }
 
-static int no_calls(tagged* expr)
+static tagged* extract_known(int pos, context *ctx)
+{
+  if (ctx->specialize && (pos >= ctx->env_start)) {
+    /* specializing; use known value */
+    env *env = ctx->env;
+    pos -= ctx->env_start;
+    while (pos--)
+      env = env->rest;
+    return env->val;
+  } else
+    return NULL;
+}
+
+static int no_calls(tagged* expr, context *ctx)
 {
   switch (TAGGED_TYPE(expr)) {
   case app_type:
-    return FALSE;
+    return ctx && can_inline((bin_op_expr*)expr, ctx, TRUE, NULL);
   case plus_type:
   case minus_type:
   case times_type:
     {
       bin_op_expr* bn = (bin_op_expr*)expr;
 
-      return no_calls(bn->left) && no_calls(bn->right);
+      return no_calls(bn->left, ctx) && no_calls(bn->right, ctx);
     }
   case if0_type:
     {
       if0_expr* if0 = (if0_expr*)expr;
 
-      return no_calls(if0->tst) && no_calls(if0->thn) && no_calls(if0->els);
+      return (no_calls(if0->tst, ctx)
+              && no_calls(if0->thn, ctx)
+              && no_calls(if0->els, ctx));
     }
   }
 
   return TRUE;
 }
 
-static int can_jit(tagged* expr)
+static int want_to_jit(lambda_expr* lam)
 {
-  switch (TAGGED_TYPE(expr)) {
-  case sym_type:
-    return FALSE;
-  case plus_type:
-  case minus_type:
-  case times_type:
-  case app_type:
-    {
-      bin_op_expr* bn = (bin_op_expr*)expr;
-
-      return can_jit(bn->left) && can_jit(bn->right);
-    }
-  case if0_type:
-    {
-      if0_expr* if0 = (if0_expr*)expr;
-
-      return can_jit(if0->tst) && can_jit(if0->thn) && can_jit(if0->els);
-    }
-  }
-
   return TRUE;
 }
 
@@ -714,6 +759,33 @@ static int definitely_function(tagged* expr)
   case lambda_type:
   case func_type:
     return TRUE;
+  }
+
+  return FALSE;
+}
+
+static int can_inline(bin_op_expr* bn, context *ctx, int without_introducing_calls, func_val **_fv)
+{
+  if (TAGGED_TYPE(bn->left) == debruijn_type) {
+    tagged* val = extract_known(((debruijn_expr*)bn->left)->pos, ctx);
+    if (val && TAGGED_TYPE(val) == func_type) {
+      /* Simpe enough argument? */
+      switch (TAGGED_TYPE(bn->right)) {
+      case num_type:
+      case func_type:
+      case debruijn_type:
+      case sym_type:
+        {
+          func_val* fv = (func_val*)val;
+          if (_fv)
+            *_fv = fv;
+          if (without_introducing_calls)
+            return no_calls(fv->lam->body, NULL);
+          return TRUE;
+        }
+        break;
+      }
+    }
   }
 
   return FALSE;

@@ -12,6 +12,8 @@
 # define USE_JIT 0
 #endif
 
+#define SPECIALIZE_AFTER_COUNT 100
+
 enum {
   num_type,
   func_type,
@@ -112,6 +114,7 @@ tagged* make_num(int n);
 
 tagged* make_func(tagged *lambda, env *e);
 symbol* make_symbol(char *s);
+int same_symbol(symbol* a, symbol *b);
 tagged* make_debruijn(int pos);
 tagged* make_bin_op(int type, tagged *left, tagged *right);
 tagged* make_plus(tagged *left, tagged *right);

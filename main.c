@@ -30,7 +30,7 @@ int main()
   test();
   
 # if RUN_FIB
-  fib_alt_test();
+  fib_test();
 # endif
 
 # if RUN_FOREVER

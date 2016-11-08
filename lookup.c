@@ -41,7 +41,7 @@ tagged* lookup(hash_table* d, symbol* id) {
 
 tagged* env_lookup(symbol *id, env* e, hash_table* d) {
   while (e) {
-    if (!compare_sym(id, e->id))
+    if (same_symbol(id, e->id))
       return e->val;
     e = e->rest;
   }
@@ -52,7 +52,7 @@ tagged* env_lookup(symbol *id, env* e, hash_table* d) {
 int env_lookup_pos(symbol *id, env* e) {
   int pos = 0;
   while (e) {
-    if (!compare_sym(id, e->id))
+    if (same_symbol(id, e->id))
       return pos;
     pos++;
     e = e->rest;

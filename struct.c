@@ -26,7 +26,7 @@ tagged* make_func(tagged *lam, env *e) {
   fv->e = e;
 
 # if USE_JIT
-  fv->specialize_counter = 100;
+  fv->specialize_counter = SPECIALIZE_AFTER_COUNT + 1;
 # endif
 
   return (tagged*)fv;
@@ -37,6 +37,11 @@ symbol* make_symbol(char *s) {
   init_tagged(&sym->t, sym_type);
   sym->s = strdup(s);
   return sym;
+}
+
+int same_symbol(symbol* a, symbol *b)
+{
+  return !strcmp(a->s, b->s);
 }
 
 tagged* make_debruijn(int pos) {
