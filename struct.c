@@ -24,7 +24,11 @@ tagged* make_func(tagged *lam, env *e) {
   init_tagged(&fv->t, func_type);
   fv->lam = (lambda_expr*)lam;
   fv->e = e;
-  
+
+# if USE_JIT
+  fv->specialize_counter = 100;
+# endif
+
   return (tagged*)fv;
 }
 

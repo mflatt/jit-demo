@@ -2,7 +2,7 @@
 #ifndef __GC_H__
 #define __GC_H__
 
-void gc_init(int heap_size);
+void gc_init(int heap_size, int verbose);
 
 void enable_gc();
 void disable_gc();

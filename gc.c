@@ -10,14 +10,17 @@
 
 static char *to_start, *to_pos, *to_end;
 static char *from_start, *from_end;
+static int gc_verbose;
 
-void gc_init(int heap_size) {
+void gc_init(int heap_size, int verbose) {
   to_start = malloc(heap_size);
   to_pos = to_start;
   to_end = to_start + heap_size;
 
   from_start = malloc(heap_size);
   from_end = from_start + heap_size;
+
+  gc_verbose = verbose;
 }
 
 static void collect_garbage(void *p1, void *p2, void *p3, void *p4);
@@ -355,5 +358,6 @@ static void collect_garbage(void *p1, void *p2, void *p3, void *p4)
     gray_pos += gcable_size(((gcable *)gray_pos)->tag);
   }
 
-  printf("[collected %d]\n", (int)(old_size - (to_pos - to_start)));
+  if (gc_verbose)
+    printf("[collected %d]\n", (int)(old_size - (to_pos - to_start)));
 }

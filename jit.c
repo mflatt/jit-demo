@@ -4,7 +4,7 @@
 
 #if !USE_JIT
 
-int jit(lambda_expr *lam) {
+int jit(func_val *fv) {
   return FALSE;
 }
 
@@ -21,10 +21,16 @@ int jit(lambda_expr *lam) {
 
 static int inited = 0;
 
+typedef struct {
+  int stack_pos;
+  env *env;
+  int env_start;
+} context;
+
 static jit_state_t *_jit;
 
-static void jit_expr(tagged* expr, int stack_pos);
-static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos);
+static void jit_expr(tagged* expr, context *ctx);
+static void jit_cont_expr(tagged* expr, int cont_type, context *ctx);
 static jitted_proc jit_continue_by_interp(tagged* body);
 
 static void jit_cont_make(tagged* expr, int cont_type, int jit_cont_type);
@@ -38,8 +44,11 @@ static void jit_get_stack(int reg, int stack_pos);
 static void jit_prep_possible_gc(int stack_pos, int tmp_reg);
 static void jit_movi_maybe_gc(int reg, tagged* v);
 
+static void jit_maybe_specialize(int stack_pos, context *ctx);
+static func_val *realloc_lam(func_val *fv);
+
 static int no_calls(tagged* expr);
-static int has_sym(tagged* expr);
+static int can_jit(tagged* expr);
 static int definitely_number(tagged* expr);
 static int definitely_function(tagged* expr);
 
@@ -68,10 +77,30 @@ void push_jit_roots(void (*paint_gray)(void *))
 # error "JIT requires fixnum encoding"
 #endif
 
-int jit(lambda_expr *lam)
+static void init_context(context *ctx)
+{
+  ctx->stack_pos = 0;
+  ctx->env = NULL;
+  ctx->env_start = 1;
+}
+
+int jit(func_val *fv)
 {
   jit_state_t *old_jit;
   jit_node_t *after_prolog;
+  lambda_expr *lam = fv->lam;
+  context ctx;
+
+  init_context(&ctx);
+
+  if ((fv->specialize_counter == 1) && can_jit(lam->body)) {
+    fv->specialize_counter = 0;
+    if (fv->e) {
+      fv = realloc_lam(fv);
+      lam = fv->lam;
+      ctx.env = fv->e;
+    }
+  }
 
   if (lam->code)
     return TRUE; /* already JIT-compiled */
@@ -79,7 +108,7 @@ int jit(lambda_expr *lam)
   if (lam->tail_code)
     return FALSE; /* tail code continues via interp */
 
-  if (has_sym(lam->body)) {
+  if (!can_jit(lam->body)) {
     lam->tail_code = jit_continue_by_interp(lam->body);
     return FALSE;
   }
@@ -96,7 +125,7 @@ int jit(lambda_expr *lam)
   jit_frame(FRAME_SIZE);
   after_prolog = jit_indirect();
 
-  jit_expr(lam->body, 0);
+  jit_expr(lam->body, &ctx);
 
   continue_or_return();
   
@@ -114,6 +143,9 @@ jitted_proc jit_cont(tagged* expr, int cont_type, int jit_cont_type, jitted_proc
   jitted_proc code;
   jit_state_t *old_jit;
   jit_node_t *after_prolog;
+  context ctx;
+
+  init_context(&ctx);
    
   old_jit = _jit;
   _jit = jit_new_state();
@@ -139,7 +171,7 @@ jitted_proc jit_cont(tagged* expr, int cont_type, int jit_cont_type, jitted_proc
 
   jit_ldi(JIT_R0, &val);
  
-  jit_cont_expr(expr, cont_type, 0);
+  jit_cont_expr(expr, cont_type, &ctx);
 
   continue_or_return();
   
@@ -216,7 +248,14 @@ jitted_proc jit_continue_by_interp(tagged* body)
   return code;
 }
 
-static void jit_expr(tagged* expr, int stack_pos)
+static void jit_expr_push(tagged* expr, context *ctx)
+{
+  ctx->stack_pos++;
+  jit_expr(expr, ctx);
+  --ctx->stack_pos;
+}
+
+static void jit_expr(tagged* expr, context *ctx)
 {
   switch (TAGGED_TYPE(expr)) {
   case num_type:
@@ -229,11 +268,20 @@ static void jit_expr(tagged* expr, int stack_pos)
   case debruijn_type:
     {
       int pos = ((debruijn_expr*)expr)->pos;
-      jit_ldi(JIT_R2, &e);
-      while (pos--) {
-        jit_ldxi(JIT_R2, JIT_R2, offsetof(env, rest));
+      if (ctx->env && (pos >= ctx->env_start)) {
+        /* specializing; use known value */
+        env *env = ctx->env;
+        pos -= ctx->env_start;
+        while (pos--)
+          env = env->rest;
+        jit_movi_maybe_gc(JIT_R0, env->val);
+      } else {
+        jit_ldi(JIT_R2, &e);
+        while (pos--) {
+          jit_ldxi(JIT_R2, JIT_R2, offsetof(env, rest));
+        }
+        jit_ldxi(JIT_R0, JIT_R2, offsetof(env, val));
       }
-      jit_ldxi(JIT_R0, JIT_R2, offsetof(env, val));
     }
     break;
   case plus_type:
@@ -243,18 +291,18 @@ static void jit_expr(tagged* expr, int stack_pos)
       bin_op_expr* bn = (bin_op_expr*)expr;
 
       if (no_calls(bn->left) && no_calls(bn->right)) {
-        jit_expr(bn->left, stack_pos);
+        jit_expr(bn->left, ctx);
 
-        jit_set_stack(stack_pos, JIT_R0);
-  
-        jit_expr(bn->right, stack_pos + 1);
+        jit_set_stack(ctx->stack_pos, JIT_R0);
+        
+        jit_expr_push(bn->right, ctx);
 
-        jit_get_stack(JIT_R1, stack_pos);
+        jit_get_stack(JIT_R1, ctx->stack_pos);
 
-        jit_cont_expr(expr, finish_bin_type, stack_pos);
+        jit_cont_expr(expr, finish_bin_type, ctx);
       } else {
         jit_cont_make(expr, right_of_bin_type, right_jitted_type);
-        jit_expr(bn->left, stack_pos);
+        jit_expr(bn->left, ctx);
         do_jit_next();
       }
     }
@@ -264,12 +312,12 @@ static void jit_expr(tagged* expr, int stack_pos)
       if0_expr* if0 = (if0_expr*)expr;
 
       if (no_calls(if0->tst)) {
-        jit_expr(if0->tst, stack_pos);
+        jit_expr(if0->tst, ctx);
 
-        jit_cont_expr(expr, finish_if0_type, stack_pos);
+        jit_cont_expr(expr, finish_if0_type, ctx);
       } else {
         jit_cont_make(expr, finish_if0_type, right_jitted_type);
-        jit_expr(if0->tst, stack_pos);
+        jit_expr(if0->tst, ctx);
         do_jit_next();
       }
     }
@@ -280,7 +328,7 @@ static void jit_expr(tagged* expr, int stack_pos)
 
       jit_ldi(JIT_R0, &e);      
 
-      jit_prep_possible_gc(stack_pos, JIT_R2);
+      jit_prep_possible_gc(ctx->stack_pos, JIT_R2);
 
       jit_prepare();
       jit_pushargi_p(lam);
@@ -294,18 +342,18 @@ static void jit_expr(tagged* expr, int stack_pos)
       bin_op_expr* bn = (bin_op_expr*)expr;
 
       if (no_calls(bn->left) && no_calls(bn->right)) {
-        jit_expr(bn->left, stack_pos);
+        jit_expr(bn->left, ctx);
 
-        jit_set_stack(stack_pos, JIT_R0);
+        jit_set_stack(ctx->stack_pos, JIT_R0);
 
-        jit_expr(bn->right, stack_pos + 1);
+        jit_expr_push(bn->right, ctx);
 
-        jit_get_stack(JIT_R1, stack_pos);
+        jit_get_stack(JIT_R1, ctx->stack_pos);
 
-        jit_cont_expr(expr, finish_app_type, stack_pos);
+        jit_cont_expr(expr, finish_app_type, ctx);
       } else  {
         jit_cont_make(expr, right_of_app_type, right_jitted_type);
-        jit_expr(bn->left, stack_pos);
+        jit_expr(bn->left, ctx);
         do_jit_next();
       }
     }
@@ -315,7 +363,7 @@ static void jit_expr(tagged* expr, int stack_pos)
   }
 }
 
-static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
+static void jit_cont_expr(tagged* expr, int cont_type, context *ctx)
 {
   switch (cont_type) {
   case right_of_bin_type:
@@ -323,13 +371,13 @@ static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
       bin_op_expr* bn = (bin_op_expr*)expr;
 
       if (no_calls(bn->right)) {
-        jit_set_stack(stack_pos, JIT_R0);
-        jit_expr(bn->right, stack_pos+1);
-        jit_get_stack(JIT_R1, stack_pos);
-        jit_cont_expr(expr, finish_bin_type, stack_pos);
+        jit_set_stack(ctx->stack_pos, JIT_R0);
+        jit_expr_push(bn->right, ctx);
+        jit_get_stack(JIT_R1, ctx->stack_pos);
+        jit_cont_expr(expr, finish_bin_type, ctx);
       } else {
         jit_cont_make(expr, finish_bin_type, finish_jitted_type);
-        jit_expr(bn->right, stack_pos);
+        jit_expr(bn->right, ctx);
         do_jit_next();
       }
     }
@@ -377,11 +425,11 @@ static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
       jit_rshi(JIT_R0, JIT_R0, 1);
       branch = jit_bnei(JIT_R0, 0);
       
-      jit_expr(if0->thn, stack_pos);
+      jit_expr(if0->thn, ctx);
       done = jit_jmpi();
       
       jit_patch(branch);
-      jit_expr(if0->els, stack_pos);
+      jit_expr(if0->els, ctx);
       
       jit_patch(done);
     }
@@ -391,13 +439,13 @@ static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
       bin_op_expr* bn = (bin_op_expr*)expr;
 
       if (no_calls(bn->right)) {
-        jit_set_stack(stack_pos, JIT_R0);
-        jit_expr(bn->right, stack_pos+1);
-        jit_get_stack(JIT_R1, stack_pos);
-        jit_cont_expr(expr, finish_app_type, stack_pos);
+        jit_set_stack(ctx->stack_pos, JIT_R0);
+        jit_expr_push(bn->right, ctx);
+        jit_get_stack(JIT_R1, ctx->stack_pos);
+        jit_cont_expr(expr, finish_app_type, ctx);
       } else {
         jit_cont_make(expr, finish_app_type, finish_jitted_type);
-        jit_expr(bn->right, stack_pos);
+        jit_expr(bn->right, ctx);
         do_jit_next();
       }
     }
@@ -412,10 +460,12 @@ static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
         jit_check_type(func_type, JIT_R1, "not a function");
 
       /* Save function & arg on stack in case of GC */
-      jit_set_stack(stack_pos, JIT_R1);
-      jit_set_stack(stack_pos+1, JIT_R0);
+      jit_set_stack(ctx->stack_pos, JIT_R1);
+      jit_set_stack(ctx->stack_pos+1, JIT_R0);
+      
+      jit_prep_possible_gc(ctx->stack_pos + 2, JIT_R2);
 
-      jit_prep_possible_gc(stack_pos+2, JIT_R2);
+      jit_maybe_specialize(ctx->stack_pos, ctx);
       
       jit_ldxi(JIT_R2, JIT_R1, offsetof(func_val, lam));
       jit_ldxi(JIT_R0, JIT_R2, offsetof(lambda_expr, tail_code));
@@ -424,15 +474,15 @@ static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
       {
         /* Not yet JIT-compiled, so compile it now */
         jit_prepare();
-        jit_pushargr(JIT_R2);
+        jit_pushargr(JIT_R1);
         jit_finishi(jit);
       }
       
       jit_patch(branch);
 
       /* Extend the environment */
-      jit_get_stack(JIT_R1, stack_pos);
-      jit_get_stack(JIT_R0, stack_pos+1);
+      jit_get_stack(JIT_R1, ctx->stack_pos);
+      jit_get_stack(JIT_R0, ctx->stack_pos+1);
       jit_ldxi(JIT_R2, JIT_R1, offsetof(func_val, e));
       jit_ldxi(JIT_R1, JIT_R1, offsetof(func_val, lam));
       jit_ldxi(JIT_R1, JIT_R1, offsetof(lambda_expr, arg_name));
@@ -447,7 +497,7 @@ static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
       jit_sti(&e, JIT_R0);
 
       /* Jump to the called function's body */
-      jit_get_stack(JIT_R1, stack_pos);
+      jit_get_stack(JIT_R1, ctx->stack_pos);
       jit_ldxi(JIT_R0, JIT_R1, offsetof(func_val, lam));
       jit_ldxi(JIT_R0, JIT_R0, offsetof(lambda_expr, tail_code));
       jit_jmpr(JIT_R0);
@@ -550,6 +600,52 @@ static void jit_movi_maybe_gc(int reg, tagged* v)
     jit_movi_p(reg, v);
 }
 
+static void jit_maybe_specialize(int stack_pos, context *ctx)
+{
+  /* JIT_R1 holds a function, and the function is also
+     on the local stack at position 0 */
+  jit_node_t *branch, *branch2;
+  
+  /* Check specialization counter */
+  jit_ldxi_i(JIT_R2, JIT_R1, offsetof(func_val, specialize_counter));
+  branch = jit_beqi(JIT_R2, 0);
+  
+  jit_subi(JIT_R2, JIT_R2, 1);
+  jit_stxi_i(offsetof(func_val, specialize_counter), JIT_R1, JIT_R2);
+  
+  /* If specialize_counter goes to 1, then specialize */
+  branch2 = jit_bnei(JIT_R2, 1);
+  jit_prepare();
+  jit_pushargr(JIT_R1);
+  jit_finishi(jit);
+
+  /* Reload function into JIT_R1 */
+  jit_get_stack(JIT_R1, stack_pos);
+
+  jit_patch(branch);
+  jit_patch(branch2);
+}
+
+static func_val *realloc_lam(func_val *fv)
+{
+  lambda_expr* lam = fv->lam;
+  
+  if (gc_is_collectable(fv)) {
+    code_roots[code_roots_count++] = (tagged*)fv;
+    lam = (lambda_expr*)make_lambda(lam->arg_name,
+                                    lam->body);
+    fv = (func_val*)code_roots[--code_roots_count];
+  } else {
+    disable_gc();
+    lam = (lambda_expr*)make_lambda(lam->arg_name,
+                                    lam->body);
+    enable_gc();
+  }
+  fv->lam = lam;
+
+  return fv;
+}
+
 static int no_calls(tagged* expr)
 {
   switch (TAGGED_TYPE(expr)) {
@@ -574,11 +670,11 @@ static int no_calls(tagged* expr)
   return TRUE;
 }
 
-static int has_sym(tagged* expr)
+static int can_jit(tagged* expr)
 {
   switch (TAGGED_TYPE(expr)) {
   case sym_type:
-    return TRUE;
+    return FALSE;
   case plus_type:
   case minus_type:
   case times_type:
@@ -586,17 +682,17 @@ static int has_sym(tagged* expr)
     {
       bin_op_expr* bn = (bin_op_expr*)expr;
 
-      return has_sym(bn->left) || has_sym(bn->right);
+      return can_jit(bn->left) && can_jit(bn->right);
     }
   case if0_type:
     {
       if0_expr* if0 = (if0_expr*)expr;
 
-      return has_sym(if0->tst) || has_sym(if0->thn) || has_sym(if0->els);
+      return can_jit(if0->tst) && can_jit(if0->thn) && can_jit(if0->els);
     }
   }
 
-  return FALSE;
+  return TRUE;
 }
 
 static int definitely_number(tagged* expr)

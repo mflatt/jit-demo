@@ -25,7 +25,7 @@ int main()
   init_forever_test();
   init_fib_test();
 
-  gc_init(HEAP_SIZE);
+  gc_init(HEAP_SIZE, FALSE);
 
   test();
   

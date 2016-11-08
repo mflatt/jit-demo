@@ -60,6 +60,9 @@ typedef struct func_val {
   tagged t;
   lambda_expr *lam;
   env* e;
+# if USE_JIT
+  int specialize_counter;
+# endif
 } func_val;
 
 typedef struct symbol {

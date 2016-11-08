@@ -150,7 +150,7 @@ void eval_star(hash_table* d)
 
         e = make_env(fv->lam->arg_name, val, fv->e);
 
-        if (jit(fv->lam)) {
+        if (jit(fv)) {
 #         if USE_JIT
           jitted_proc code = fv->lam->code;
           todos = gr->rest;
