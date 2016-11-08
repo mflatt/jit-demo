@@ -74,6 +74,7 @@ int main()
   tagged *fiftysix = make_app(make_lambda(x, make_times(eightofone, seven)), one);
   tagged *eightbybranch0 = make_app(make_lambda(x, make_plus(branch0, one)), one);
   tagged *ninebybranch1 = make_app(make_lambda(x, make_plus(branch1, one)), one);
+  tagged *app_lam = make_lambda(x, make_app(x_var, one));
 
   hash_table* empty_d = make_dict();
   hash_table* fz_d = make_dict();
@@ -93,6 +94,8 @@ int main()
   tagged* c_fiftysix;
   tagged* c_eightbybranch0;
   tagged* c_ninebybranch1;
+
+  tagged* partial_c_one;
 
 #if RUN_FOREVER
   symbol* forever = make_symbol("forever");
@@ -148,6 +151,9 @@ int main()
   c_eightbybranch0 = compile(eightbybranch0, NULL, fz_d);
   c_ninebybranch1 = compile(ninebybranch1, NULL, fz_d);
 
+  partial_c_one = make_app(compile(app_lam, NULL, fz_d),
+                           id_lam);
+
 # if RUN_FIB
   hash_set(fib_d, fib, fib_func);
   compile_function(fib, fib_d);
@@ -194,6 +200,8 @@ int main()
   check_num_val(eval(c_fiftysix, NULL, fz_d), 56);
   check_num_val(eval(c_eightbybranch0, NULL, fz_d), 8);
   check_num_val(eval(c_ninebybranch1, NULL, fz_d), 9);
+
+  check_num_val(eval(partial_c_one, NULL, fz_d), 1);
 
 # if RUN_FIB
   check_num_val(eval(app_fib, NULL, fib_d), fib_result);

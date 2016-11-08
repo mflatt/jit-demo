@@ -192,6 +192,12 @@ void eval_star(hash_table* d)
       PERFORM_TODOS(gj->code(), todos);
 #     undef gj
     }
+  case interp_type:
+    {
+#     define gi ((interp *)todos)
+      EVAL(gi->expr, e, gi->rest);
+#     undef gi
+    }
 # endif
   }
   

@@ -1,6 +1,6 @@
 #include <stddef.h>
 #include "struct.h"
-#include "jit.h"
+
 
 #if !USE_JIT
 
@@ -11,6 +11,7 @@ int jit(lambda_expr *lam) {
 #else
 
 #include <lightning.h>
+#include "gc.h"
 #include "eval.h"
 #include "continue.h"
 #include "fail.h"
@@ -24,6 +25,7 @@ static jit_state_t *_jit;
 
 static void jit_expr(tagged* expr, int stack_pos);
 static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos);
+static jitted_proc jit_continue_by_interp(tagged* body);
 
 static void jit_cont_make(tagged* expr, int cont_type, int jit_cont_type);
 
@@ -34,6 +36,7 @@ static void jit_check_type(int need_type, int reg, char *complain);
 static void jit_set_stack(int stack_pos, int reg);
 static void jit_get_stack(int reg, int stack_pos);
 static void jit_prep_possible_gc(int stack_pos, int tmp_reg);
+static void jit_movi_maybe_gc(int reg, tagged* v);
 
 static int no_calls(tagged* expr);
 static int has_sym(tagged* expr);
@@ -42,16 +45,23 @@ static int definitely_function(tagged* expr);
 
 #define STACK_SIZE 64
 static tagged* stack[STACK_SIZE];
-static int stack_gc_depth;
+static int stack_gc_depth = 0;
+
+#define MAX_CODE_ROOTS 128
+static tagged* code_roots[MAX_CODE_ROOTS];
+static int code_roots_count = 0;
 
 #define FRAME_SIZE 64
 
-void push_jit_stack(void (*paint_gray)(void *))
+void push_jit_roots(void (*paint_gray)(void *))
 {
   int i;
-  for (i = 0; i < stack_gc_depth; i++) {
+
+  for (i = 0; i < code_roots_count; i++)
+    paint_gray(&code_roots[i]);
+
+  for (i = 0; i < stack_gc_depth; i++)
     paint_gray(&stack[i]);
-  }
 }
 
 #if !FIXNUM_ENCODING
@@ -66,8 +76,13 @@ int jit(lambda_expr *lam)
   if (lam->code)
     return TRUE; /* already JIT-compiled */
 
-  if (has_sym(lam->body))
+  if (lam->tail_code)
+    return FALSE; /* tail code continues via interp */
+
+  if (has_sym(lam->body)) {
+    lam->tail_code = jit_continue_by_interp(lam->body);
     return FALSE;
+  }
 
   if (!inited) {
     inited = 1;
@@ -152,17 +167,61 @@ void continue_or_return()
   jit_patch(test);
   test = jit_beqi(JIT_R1, finish_jitted_type);
   jit_patch_at(test, this_one);
-
+  
   jit_prep_possible_gc(0, JIT_R2);
   jit_retr(JIT_R0);
-} 
+}
+
+jitted_proc jit_continue_by_interp(tagged* body)
+{
+  jit_state_t *old_jit;
+  jitted_proc code;
+  jit_node_t *after_prolog;
+
+  if (!inited) {
+    inited = 1;
+    init_jit(NULL);
+  }
+
+  old_jit = _jit;
+  _jit = jit_new_state();
+
+  jit_prolog();
+  jit_frame(FRAME_SIZE);
+
+  after_prolog = jit_indirect();
+
+  jit_movi_maybe_gc(JIT_R0, body);
+  jit_ldi(JIT_R1, &todos);
+
+  jit_prepare();
+  jit_pushargr(JIT_R0);
+  jit_pushargr(JIT_R1);
+  jit_finishi(make_interp);
+
+  jit_retval(JIT_R0);
+  jit_sti(&todos, JIT_R0);
+
+  jit_prep_possible_gc(0, JIT_R2);
+
+  jit_movi_p(JIT_R0, make_num(0));
+  jit_retr(JIT_R0);
+
+  (void)jit_emit();
+  code = jit_address(after_prolog);
+
+  jit_clear_state();
+  _jit = old_jit;
+  
+  return code;
+}
 
 static void jit_expr(tagged* expr, int stack_pos)
 {
   switch (TAGGED_TYPE(expr)) {
   case num_type:
   case func_type:
-    jit_movi_p(JIT_R0, expr);
+    jit_movi_maybe_gc(JIT_R0, expr);
     break;
   case sym_type:
     fail("cannot JIT symbol lookup");
@@ -357,7 +416,7 @@ static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
       jit_prep_possible_gc(stack_pos+2, JIT_R2);
       
       jit_ldxi(JIT_R2, JIT_R1, offsetof(func_val, lam));
-      jit_ldxi(JIT_R0, JIT_R2, offsetof(lambda_expr, code));
+      jit_ldxi(JIT_R0, JIT_R2, offsetof(lambda_expr, tail_code));
       branch = jit_bnei(JIT_R0, (jit_word_t)NULL);
 
       {
@@ -375,7 +434,6 @@ static void jit_cont_expr(tagged* expr, int cont_type, int stack_pos)
       jit_ldxi(JIT_R1, JIT_R1, offsetof(func_val, lam));
       jit_ldxi(JIT_R1, JIT_R1, offsetof(lambda_expr, arg_name));
       jit_ldi(JIT_R2, &e);
-
       
       jit_prepare();
       jit_pushargr(JIT_R1); /* argument name */
@@ -476,6 +534,18 @@ static void jit_prep_possible_gc(int stack_pos, int tmp_reg)
 {
   jit_movi(tmp_reg, stack_pos);
   jit_sti_i(&stack_gc_depth, tmp_reg);
+}
+
+static void jit_movi_maybe_gc(int reg, tagged* v)
+{
+  if (gc_is_collectable(v)) {
+    if (code_roots_count >= MAX_CODE_ROOTS)
+      fail("too many GCable values in JIT-generated code");
+    code_roots[code_roots_count] = v;
+    jit_ldi(reg, &code_roots[code_roots_count]);
+    code_roots_count++;
+  } else
+    jit_movi_p(reg, v);
 }
 
 static int no_calls(tagged* expr)

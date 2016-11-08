@@ -99,6 +99,13 @@ void *gc_malloc3(int sz, void *p1, void *p2, void *p3)
   return gc_malloc4(sz, p1, p2, p3, NULL);
 }
 
+int gc_is_collectable(void *p)
+{
+  return (!((uintptr_t)p & 0x1)
+          && ((char*)p >= to_start)
+          && ((char*)p < to_end));
+}
+
 /************************************************************/
 
 static int gcable_size(int tag) 
@@ -153,6 +160,9 @@ static int gcable_size(int tag)
     break;
   case finish_jitted_type:
     sz = sizeof(finish_jitted);
+    break;
+  case interp_type:
+    sz = sizeof(interp);
     break;
 # endif
 
@@ -298,6 +308,13 @@ static void follow_one_gray_pointer(void *p)
       paint_gray(&gj->val);
     }
     break;
+  case interp_type:
+    {
+      interp *gi = (interp *)p;
+      paint_gray(&gi->expr);
+      paint_gray(&gi->rest);
+    }
+    break;
 # endif
   default:
     fail("bad tag for paint_gray content");
@@ -329,7 +346,7 @@ static void collect_garbage(void *p1, void *p2, void *p3, void *p4)
   if (p3) paint_gray(p3);
   if (p4) paint_gray(p4);
 # if USE_JIT
-  push_jit_stack(paint_gray);
+  push_jit_roots(paint_gray);
 # endif
   
   gray_pos = to_start;

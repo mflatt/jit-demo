@@ -13,6 +13,7 @@ enum {
 # if USE_JIT  
   right_jitted_type,
   finish_jitted_type,
+  interp_type,
 # endif
 };
 
@@ -73,6 +74,12 @@ typedef struct finish_jitted {
   jitted j;
   tagged* val;
 } finish_jitted;
+
+typedef struct interp {
+  cont c;
+  tagged* expr;
+  cont *rest;
+} interp;
 #endif
 
 
@@ -85,6 +92,7 @@ cont *make_finish_if0(tagged *thn, tagged *els, env *env, cont *rest);
 #if USE_JIT
 cont *make_right_jitted(jitted_proc code, jitted_proc tail_code, cont *rest, env *env);
 cont *make_finish_jitted(jitted_proc code, jitted_proc tail_code, cont *rest, tagged* val);
+cont *make_interp(tagged*expr, cont *rest);
 #endif
 
 #endif

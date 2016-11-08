@@ -102,4 +102,14 @@ cont *make_finish_jitted(jitted_proc code, jitted_proc tail_code, cont *rest, ta
   
   return (cont*)c;
 }
+
+cont *make_interp(tagged* expr, cont *rest) {
+  interp *c = gc_malloc2(sizeof(interp),
+                         &expr,
+                         &rest);
+  init_cont(&c->c, interp_type);
+  c->expr = expr;
+  c->rest = rest;
+  return (cont*)c;
+}
 #endif

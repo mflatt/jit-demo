@@ -13,4 +13,6 @@ void *gc_malloc2(int sz, void *p1, void *p2);
 void *gc_malloc3(int sz, void *p1, void *p2, void *p3);
 void *gc_malloc4(int sz, void *p1, void *p2, void *p3, void *p4);
 
+int gc_is_collectable(void *p);
+
 #endif

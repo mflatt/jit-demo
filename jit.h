@@ -5,7 +5,7 @@
 int jit(lambda_expr *lam);
 
 #if USE_JIT
-void push_jit_stack(void (*paint_gray)(void *));
+void push_jit_roots(void (*paint_gray)(void *));
 #endif
 
 #endif
